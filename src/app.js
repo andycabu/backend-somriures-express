@@ -1,6 +1,8 @@
 "use strict";
 import { config } from "dotenv";
 config({ path: "../.env" });
+import express from "express";
+import axios from "axios";
 import {
   URL,
   USER,
@@ -11,23 +13,16 @@ import {
 } from "./utils/constants.js";
 import { TEMPLATE_NAMES, ACCESS_CONTROL } from "./helpers/helpers.js";
 import "./db/db.js";
-import { Message } from "./models/Message.js";
+import Message from "./models/Message.js";
 
 const URL_WHAT = `https://graph.facebook.com/v19.0/${FROM_PHONE_NUMBER_ID}/messages`;
 
-// Imports dependencies and set up http server
-import express from "express";
-import axios from "axios";
-
 const app = express();
-//Middlewares
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Sets server port and logs message on success
 app.listen(process.env.PORT || 3000, () => console.log("webhook is listening"));
 
-// Función auxiliar para responder con mensajes de error
 const respondWithErrorMessage = (message) => ({
   statusCode: 400,
   headers: ACCESS_CONTROL,
@@ -80,8 +75,73 @@ function isValidIncomingMessage(message) {
 
   return true;
 }
+async function saveSentMessage(change) {
+  const messageDetails = change.value.statuses[0];
+  const newMessage = new Message({
+    direction: "sent",
+    whatsappBusinessAccountId: change.id,
+    messagingProduct: "whatsapp",
+    metadata: messageDetails.metadata,
+    messages: [
+      {
+        from: "Tu número de teléfono", // Aquí debes poner el número de teléfono desde el cual envías el mensaje
+        messageId: messageDetails.id,
+        timestamp: messageDetails.timestamp,
+        status: messageDetails.status,
+        recipientId: messageDetails.recipient_id,
+        conversationId: messageDetails.conversation.id,
+        conversationExpiration:
+          messageDetails.conversation.expiration_timestamp,
+        conversationOriginType: messageDetails.conversation.origin.type,
+        pricing: messageDetails.pricing,
+      },
+    ],
+    receivedAt: new Date(),
+  });
+  await newMessage.save();
+}
+
+// Función para guardar mensajes recibidos en la base de datos
+async function saveReceivedMessage(message) {
+  const messageDetails = message.changes[0].value.messages[0];
+  const contacts = message.changes[0].value.contacts[0];
+  const metadata = message.changes[0].value.metadata;
+
+  const newMessage = new Message({
+    direction: "received",
+    whatsappBusinessAccountId: message.id,
+    messagingProduct: "whatsapp",
+    metadata: {
+      displayPhoneNumber: metadata.display_phone_number,
+      phoneNumberId: metadata.phone_number_id,
+    },
+    contacts: [
+      {
+        profile: {
+          name: contacts.profile.name,
+        },
+        waId: contacts.wa_id,
+      },
+    ],
+    messages: [
+      {
+        from: messageDetails.from,
+        messageId: messageDetails.id,
+        timestamp: messageDetails.timestamp,
+        text: {
+          body: messageDetails.text.body,
+        },
+        type: messageDetails.type,
+      },
+    ],
+    receivedAt: new Date(),
+  });
+  await newMessage.save();
+}
+
 const webhookPost = async (req, res) => {
   console.log("webhookPost: ", req.body);
+  const body = req.body;
   try {
     const incomingMessage = req.body;
     if (!isValidIncomingMessage(incomingMessage)) {
@@ -95,6 +155,7 @@ const webhookPost = async (req, res) => {
     }
 
     const changes = incomingMessage.entry?.[0]?.changes;
+
     const hasIncomingMessage = changes?.some(
       (change) => change.field === "messages" && change.value?.messages
     );
@@ -105,8 +166,18 @@ const webhookPost = async (req, res) => {
     }
 
     const messageDetails = changes[0].value.messages[0];
-    const recipientId = messageDetails.from;
+    const existingMessage = await Message.findOne({
+      "messages.messageId": messageDetails.id,
+    });
+    if (existingMessage) {
+      console.log("el mensaje ya existe en la base de datos");
+      return res.status(200).set(ACCESS_CONTROL).json(req.body);
+    } else {
+      console.log("el mensaje no existe en la base de datos");
+      await saveReceivedMessage(body.entry[0]);
+    }
 
+    const recipientId = messageDetails.from;
     const templateName = messageDetails.metadata
       ? TEMPLATE_NAMES.CONFIRMATION
       : TEMPLATE_NAMES.DEFAULT;
@@ -125,9 +196,8 @@ const webhookPost = async (req, res) => {
       },
     };
 
-    const response = await sendMessage(data);
-    console.log("WhatsApp API Response:", response.data);
-    return res.status(200).set(ACCESS_CONTROL).json(response.data);
+    // const response = await sendMessage(data);
+    return res.status(200).set(ACCESS_CONTROL).json(req.body); //.json(response.data);
   } catch (error) {
     console.error("Error processing message:", error);
     const response = respondWithErrorMessage(
@@ -140,7 +210,6 @@ const webhookPost = async (req, res) => {
   }
 };
 
-// Define la ruta del webhook y asocia el controlador
 app.post("/webhook", webhookPost);
 
 function getTemplateComponents(metadata) {
@@ -169,7 +238,7 @@ app.get("/webhook", (req, res) => {
       console.log("WEBHOOK_VERIFIED");
       res.status(200).send(challenge);
     } else {
-      res.sendStatus(403);
+      res.status(403);
     }
   }
 });
