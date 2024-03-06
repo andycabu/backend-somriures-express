@@ -3,6 +3,8 @@ import { config } from "dotenv";
 config({ path: "../.env" });
 import express from "express";
 import axios from "axios";
+import { Server } from "socket.io";
+import { createServer } from "node:http";
 import {
   URL,
   USER,
@@ -18,11 +20,24 @@ import Message from "./models/Message.js";
 const URL_WHAT = `https://graph.facebook.com/v19.0/${FROM_PHONE_NUMBER_ID}/messages`;
 
 const app = express();
+const server = createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
 app.use(express.json());
+
+io.on("connection", (socket) => {
+  console.log("a user connected");
+});
 
 app.use(express.urlencoded({ extended: false }));
 
-app.listen(process.env.PORT || 3000, () => console.log("webhook is listening"));
+server.listen(3000, () => {
+  console.log("server running at http://localhost:3000");
+});
 
 const respondWithErrorMessage = (message) => ({
   statusCode: 400,
@@ -138,6 +153,7 @@ async function saveReceivedMessage(message) {
     receivedAt: new Date(),
   });
   await newMessage.save();
+  // io.getIO().emit("mensaje", newMessage);
 }
 
 const getContacts = async (req, res) => {
