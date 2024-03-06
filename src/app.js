@@ -19,6 +19,7 @@ const URL_WHAT = `https://graph.facebook.com/v19.0/${FROM_PHONE_NUMBER_ID}/messa
 
 const app = express();
 app.use(express.json());
+
 app.use(express.urlencoded({ extended: false }));
 
 app.listen(process.env.PORT || 3000, () => console.log("webhook is listening"));
@@ -31,12 +32,13 @@ const respondWithErrorMessage = (message) => ({
 
 async function sendMessage(data) {
   try {
-    return await axios.post(URL_WHAT, data, {
+    const response = await axios.post(URL_WHAT, data, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ACCESS_TOKEN}`,
       },
     });
+    console.log("sendMessage: ", response);
   } catch (error) {
     throw new Error("Failed to send message through WhatsApp API");
   }
@@ -101,7 +103,6 @@ async function saveSentMessage(change) {
   await newMessage.save();
 }
 
-// Función para guardar mensajes recibidos en la base de datos
 async function saveReceivedMessage(message) {
   const messageDetails = message.changes[0].value.messages[0];
   const contacts = message.changes[0].value.contacts[0];
@@ -139,6 +140,20 @@ async function saveReceivedMessage(message) {
   await newMessage.save();
 }
 
+const getContacts = async (req, res) => {
+  try {
+    const mensajes = await Message.find({ direction: "received" }).exec();
+    res.status(200).set(ACCESS_CONTROL).json(mensajes);
+  } catch (error) {
+    console.error("Error al obtener los mensajes:", error);
+    res
+      .status(500)
+      .json({ error: "Error al obtener los mensajes del servidor" });
+  }
+};
+
+app.get("/getContacts", getContacts);
+
 const webhookPost = async (req, res) => {
   console.log("webhookPost: ", req.body);
   const body = req.body;
@@ -160,6 +175,7 @@ const webhookPost = async (req, res) => {
       (change) => change.field === "messages" && change.value?.messages
     );
 
+    console.log("hasIncomingMessage", hasIncomingMessage);
     if (!hasIncomingMessage) {
       console.log("No new messages to process.");
       return res.status(200).set(ACCESS_CONTROL).json(req.body);
@@ -186,18 +202,24 @@ const webhookPost = async (req, res) => {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: recipientId,
-      type: "template",
-      template: {
-        name: templateName,
-        language: {
-          code: "es",
-        },
-        components: getTemplateComponents(messageDetails.metadata),
+      // type: "template",
+      // template: {
+      //   name: templateName,
+      //   language: {
+      //     code: "es",
+      //   },
+      //   components: getTemplateComponents(messageDetails.metadata),
+      // },
+      type: "text",
+      text: {
+        preview_url: false,
+        body: "prueba de recibir mensajes WhatsApp",
       },
     };
 
-    // const response = await sendMessage(data);
-    return res.status(200).set(ACCESS_CONTROL).json(req.body); //.json(response.data);
+    const response = await sendMessage(data);
+
+    return res.status(200).set(ACCESS_CONTROL).json(req.body);
   } catch (error) {
     console.error("Error processing message:", error);
     const response = respondWithErrorMessage(
