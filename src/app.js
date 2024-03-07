@@ -15,7 +15,7 @@ import {
 } from "./utils/constants.js";
 import { TEMPLATE_NAMES, ACCESS_CONTROL } from "./helpers/helpers.js";
 import "./db/db.js";
-import Message from "./models/Message.js";
+import Contact from "./models/Contact.js";
 
 const URL_WHAT = `https://graph.facebook.com/v19.0/${FROM_PHONE_NUMBER_ID}/messages`;
 
@@ -34,7 +34,14 @@ io.on("connection", (socket) => {
 });
 
 app.use(express.urlencoded({ extended: false }));
-
+app.use(function (req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept"
+  );
+  next();
+});
 server.listen(3000, () => {
   console.log("server running at http://localhost:3000");
 });
@@ -45,19 +52,105 @@ const respondWithErrorMessage = (message) => ({
   body: JSON.stringify({ error: message }),
 });
 
-async function sendMessage(data) {
-  try {
-    const response = await axios.post(URL_WHAT, data, {
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
+async function saveContactMessage(message) {
+  const message = req.body;
+  const messageDetails = message.changes[0].value.messages[0];
+  const contact = message.changes[0].value.contacts[0];
+  const messageType = "received";
+  const existingContact = await Contact.findOne({
+    "contact.waId": contact.wa_id,
+  });
+  if (existingContact) {
+    existingContact.messages.push({
+      from: messageDetails.from,
+      messageId: messageDetails.id,
+      timestamp: messageDetails.timestamp,
+      text: {
+        body: messageDetails.text.body,
       },
+      type: messageDetails.type,
+      messageType: messageType,
     });
-    console.log("sendMessage: ", response);
-  } catch (error) {
-    throw new Error("Failed to send message through WhatsApp API");
+    existingContact.messages.sort((a, b) => b.timestamp - a.timestamp);
+    await existingContact.save();
+  } else {
+    const newContact = new Contact({
+      direction: "received",
+      whatsappBusinessAccountId: message.id,
+      messagingProduct: "whatsapp",
+      metadata: {
+        displayPhoneNumber: message.metadata.display_phone_number,
+        phoneNumberId: message.metadata.phone_number_id,
+      },
+      contact: [
+        {
+          profile: {
+            name: contact.profile.name,
+          },
+          waId: contact.wa_id,
+        },
+      ],
+      messages: [
+        {
+          from: messageDetails.from,
+          messageId: messageDetails.id,
+          timestamp: messageDetails.timestamp,
+          text: {
+            body: messageDetails.text.body,
+          },
+          type: messageDetails.type,
+          messageType: messageType,
+        },
+      ],
+      receivedAt: new Date(),
+    });
+    await newContact.save();
+  }
+  // Verificar si se está enviando un mensaje y luego guardarlo
+  if (message.type === "text") {
+    const response = await sendMessage(message);
+    const sentMessage = {
+      from: "tu_numero_de_telefono",
+      messageId: response.messages[0].id,
+      timestamp: Date.now(),
+      text: {
+        body: "me lees",
+      },
+      type: "text",
+      messageType: "sent",
+    };
+    if (existingContact) {
+      existingContact.messages.push(sentMessage);
+      existingContact.messages.sort((a, b) => b.timestamp - a.timestamp);
+      await existingContact.save();
+    } else {
+      const newContact = new Contact({
+        direction: "sent",
+        whatsappBusinessAccountId: message.id,
+        messagingProduct: "whatsapp",
+        metadata: {
+          displayPhoneNumber: message.metadata.display_phone_number,
+          phoneNumberId: message.metadata.phone_number_id,
+        },
+        contact: [
+          {
+            profile: {
+              name: contact.profile.name,
+            },
+            waId: contact.wa_id,
+          },
+        ],
+        messages: [sentMessage],
+        receivedAt: new Date(),
+      });
+      await newContact.save();
+    }
   }
 }
+const saveSentMessage = async (req, res) => {};
+
+app.post("/saveMessage", saveSentMessage);
+
 function isValidIncomingMessage(message) {
   if (!message || typeof message !== "object") {
     console.error(
@@ -92,74 +185,11 @@ function isValidIncomingMessage(message) {
 
   return true;
 }
-async function saveSentMessage(change) {
-  const messageDetails = change.value.statuses[0];
-  const newMessage = new Message({
-    direction: "sent",
-    whatsappBusinessAccountId: change.id,
-    messagingProduct: "whatsapp",
-    metadata: messageDetails.metadata,
-    messages: [
-      {
-        from: "Tu número de teléfono", // Aquí debes poner el número de teléfono desde el cual envías el mensaje
-        messageId: messageDetails.id,
-        timestamp: messageDetails.timestamp,
-        status: messageDetails.status,
-        recipientId: messageDetails.recipient_id,
-        conversationId: messageDetails.conversation.id,
-        conversationExpiration:
-          messageDetails.conversation.expiration_timestamp,
-        conversationOriginType: messageDetails.conversation.origin.type,
-        pricing: messageDetails.pricing,
-      },
-    ],
-    receivedAt: new Date(),
-  });
-  await newMessage.save();
-}
-
-async function saveReceivedMessage(message) {
-  const messageDetails = message.changes[0].value.messages[0];
-  const contacts = message.changes[0].value.contacts[0];
-  const metadata = message.changes[0].value.metadata;
-
-  const newMessage = new Message({
-    direction: "received",
-    whatsappBusinessAccountId: message.id,
-    messagingProduct: "whatsapp",
-    metadata: {
-      displayPhoneNumber: metadata.display_phone_number,
-      phoneNumberId: metadata.phone_number_id,
-    },
-    contacts: [
-      {
-        profile: {
-          name: contacts.profile.name,
-        },
-        waId: contacts.wa_id,
-      },
-    ],
-    messages: [
-      {
-        from: messageDetails.from,
-        messageId: messageDetails.id,
-        timestamp: messageDetails.timestamp,
-        text: {
-          body: messageDetails.text.body,
-        },
-        type: messageDetails.type,
-      },
-    ],
-    receivedAt: new Date(),
-  });
-  await newMessage.save();
-  // io.getIO().emit("mensaje", newMessage);
-}
 
 const getContacts = async (req, res) => {
   try {
-    const mensajes = await Message.find({ direction: "received" }).exec();
-    res.status(200).set(ACCESS_CONTROL).json(mensajes);
+    const contacts = await Contact.find({ direction: "received" }).exec();
+    res.status(200).set(ACCESS_CONTROL).json(contacts);
   } catch (error) {
     console.error("Error al obtener los mensajes:", error);
     res
@@ -167,12 +197,26 @@ const getContacts = async (req, res) => {
       .json({ error: "Error al obtener los mensajes del servidor" });
   }
 };
+async function sendMessage(data) {
+  try {
+    const res = await axios.post(URL_WHAT, data, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+      },
+    });
+    return res.data;
+  } catch (error) {
+    throw new Error("Failed to send message through WhatsApp API");
+  }
+}
 
 app.get("/getContacts", getContacts);
 
 const webhookPost = async (req, res) => {
   console.log("webhookPost: ", req.body);
   const body = req.body;
+  console.log("body: ", body.entry[0]);
   try {
     const incomingMessage = req.body;
     if (!isValidIncomingMessage(incomingMessage)) {
@@ -191,14 +235,13 @@ const webhookPost = async (req, res) => {
       (change) => change.field === "messages" && change.value?.messages
     );
 
-    console.log("hasIncomingMessage", hasIncomingMessage);
     if (!hasIncomingMessage) {
       console.log("No new messages to process.");
       return res.status(200).set(ACCESS_CONTROL).json(req.body);
     }
 
     const messageDetails = changes[0].value.messages[0];
-    const existingMessage = await Message.findOne({
+    const existingMessage = await Contact.findOne({
       "messages.messageId": messageDetails.id,
     });
     if (existingMessage) {
@@ -206,7 +249,7 @@ const webhookPost = async (req, res) => {
       return res.status(200).set(ACCESS_CONTROL).json(req.body);
     } else {
       console.log("el mensaje no existe en la base de datos");
-      await saveReceivedMessage(body.entry[0]);
+      await saveContactMessage(body.entry[0]);
     }
 
     const recipientId = messageDetails.from;

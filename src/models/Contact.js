@@ -1,14 +1,15 @@
 import { Schema, model } from "mongoose";
 
-const messageSchema = new Schema({
+const contactSchema = new Schema({
   direction: { type: String, enum: ["sent", "received"], required: true },
   whatsappBusinessAccountId: { type: String, required: true },
   messagingProduct: { type: String, default: "whatsapp" },
+  status: { type: String, default: "pending" },
   metadata: {
     displayPhoneNumber: String,
     phoneNumberId: String,
   },
-  contacts: [
+  contact: [
     {
       profile: {
         name: String,
@@ -30,6 +31,6 @@ const messageSchema = new Schema({
   receivedAt: { type: Date, default: Date.now },
 });
 
-messageSchema.index({ "contacts.waId": 1, receivedAt: -1 });
+contactSchema.index({ "contacts.waId": 1, receivedAt: -1 });
 
-export default model("Message", messageSchema);
+export default model("Contact", contactSchema);
