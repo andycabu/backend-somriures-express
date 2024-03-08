@@ -86,26 +86,24 @@ async function saveContactMessage(message) {
     await newMessage.save();
   } else {
     const response = await sendMessage(message);
-    const contact = response.contacts[0];
-    console.log("contact", contact);
 
-    let existingContact = await Contact.findOne({
-      "profile.waId": contact.wa_id,
+    let contact = await Contact.findOne({
+      "profile.waId": response.contacts[0].wa_id,
     });
     const now = new Date();
-    if (!existingContact) {
+    if (!contact) {
       existingContact = new Contact({
         profile: {
           name: "Unknown",
-          waId: contact.wa_id,
+          waId: response.contacts[0].wa_id,
         },
         receivedAt: new Date(),
       });
-      await existingContact.save();
+      await contact.save();
     }
 
     const newMessage = new Message({
-      contactId: contact.wa_id,
+      contactId: contact._id,
       from: "15550155362",
       messageId: response.messages[0].id,
       timestamp: Math.floor(now.getTime() / 1000),
@@ -228,6 +226,20 @@ const webhookPost = async (req, res) => {
     );
 
     if (!hasIncomingMessage) {
+      console.log("Received new statuses:", changes[0].statuses);
+
+      if (changes[0].statuses) {
+        console.log("Received new statuses:", changes[0].statuses);
+        const id = changes[0].id;
+        const newStatus = changes[0].status;
+        if (newStatus !== "read") {
+          await Message.updateOne(
+            { messageId: id },
+            { $set: { status: newStatus } }
+          );
+        }
+        return res.sendStatus(200);
+      }
       console.log("No new messages to process.");
       return res.sendStatus(200);
     }
