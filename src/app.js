@@ -16,6 +16,7 @@ import {
 import { TEMPLATE_NAMES, ACCESS_CONTROL } from "./helpers/helpers.js";
 import "./db/db.js";
 import Contact from "./models/Contact.js";
+import Message from "./models/Message.js";
 
 const URL_WHAT = `https://graph.facebook.com/v19.0/${FROM_PHONE_NUMBER_ID}/messages`;
 
@@ -53,101 +54,82 @@ const respondWithErrorMessage = (message) => ({
 });
 
 async function saveContactMessage(message) {
-  const message = req.body;
-  const messageDetails = message.changes[0].value.messages[0];
-  const contact = message.changes[0].value.contacts[0];
-  const messageType = "received";
-  const existingContact = await Contact.findOne({
-    "contact.waId": contact.wa_id,
-  });
-  if (existingContact) {
-    existingContact.messages.push({
+  if (message.changes?.length > 0) {
+    const messageDetails = message.changes[0].value.messages[0];
+    const contactDetails = message.changes[0].value.contacts[0];
+
+    let contact = await Contact.findOne({
+      "profile.waId": contactDetails.wa_id,
+    });
+
+    if (!contact) {
+      contact = new Contact({
+        profile: {
+          name: contactDetails.profile.name,
+          waId: contactDetails.wa_id,
+        },
+        receivedAt: new Date(),
+      });
+      await contact.save();
+    }
+
+    const newMessage = new Message({
+      contactId: contact._id,
       from: messageDetails.from,
       messageId: messageDetails.id,
       timestamp: messageDetails.timestamp,
-      text: {
-        body: messageDetails.text.body,
-      },
+      text: { body: messageDetails.text.body },
       type: messageDetails.type,
-      messageType: messageType,
-    });
-    existingContact.messages.sort((a, b) => b.timestamp - a.timestamp);
-    await existingContact.save();
-  } else {
-    const newContact = new Contact({
       direction: "received",
-      whatsappBusinessAccountId: message.id,
-      messagingProduct: "whatsapp",
-      metadata: {
-        displayPhoneNumber: message.metadata.display_phone_number,
-        phoneNumberId: message.metadata.phone_number_id,
-      },
-      contact: [
-        {
-          profile: {
-            name: contact.profile.name,
-          },
+    });
+
+    await newMessage.save();
+  } else {
+    const response = await sendMessage(message);
+    const contact = response.contacts[0];
+    console.log("contact", contact);
+
+    let existingContact = await Contact.findOne({
+      "profile.waId": contact.wa_id,
+    });
+    const now = new Date();
+    if (!existingContact) {
+      existingContact = new Contact({
+        profile: {
+          name: "Unknown",
           waId: contact.wa_id,
         },
-      ],
-      messages: [
-        {
-          from: messageDetails.from,
-          messageId: messageDetails.id,
-          timestamp: messageDetails.timestamp,
-          text: {
-            body: messageDetails.text.body,
-          },
-          type: messageDetails.type,
-          messageType: messageType,
-        },
-      ],
-      receivedAt: new Date(),
-    });
-    await newContact.save();
-  }
-  // Verificar si se está enviando un mensaje y luego guardarlo
-  if (message.type === "text") {
-    const response = await sendMessage(message);
-    const sentMessage = {
-      from: "tu_numero_de_telefono",
-      messageId: response.messages[0].id,
-      timestamp: Date.now(),
-      text: {
-        body: "me lees",
-      },
-      type: "text",
-      messageType: "sent",
-    };
-    if (existingContact) {
-      existingContact.messages.push(sentMessage);
-      existingContact.messages.sort((a, b) => b.timestamp - a.timestamp);
-      await existingContact.save();
-    } else {
-      const newContact = new Contact({
-        direction: "sent",
-        whatsappBusinessAccountId: message.id,
-        messagingProduct: "whatsapp",
-        metadata: {
-          displayPhoneNumber: message.metadata.display_phone_number,
-          phoneNumberId: message.metadata.phone_number_id,
-        },
-        contact: [
-          {
-            profile: {
-              name: contact.profile.name,
-            },
-            waId: contact.wa_id,
-          },
-        ],
-        messages: [sentMessage],
         receivedAt: new Date(),
       });
-      await newContact.save();
+      await existingContact.save();
     }
+
+    const newMessage = new Message({
+      contactId: contact.wa_id,
+      from: "15550155362",
+      messageId: response.messages[0].id,
+      timestamp: Math.floor(now.getTime() / 1000),
+      text: {
+        body: message.text.body,
+      },
+      type: "text",
+      direction: "sent",
+      status: "sent",
+    });
+
+    await newMessage.save();
   }
 }
-const saveSentMessage = async (req, res) => {};
+
+const saveSentMessage = async (req, res) => {
+  try {
+    const message = req.body;
+    await saveContactMessage(message);
+    return res.status(200).set(ACCESS_CONTROL).json(req.body);
+  } catch (error) {
+    console.error("Error al obtener los mensajes:", error);
+  }
+};
 
 app.post("/saveMessage", saveSentMessage);
 
@@ -186,17 +168,29 @@ function isValidIncomingMessage(message) {
   return true;
 }
 
-const getContacts = async (req, res) => {
+const getContactsAndMessages = async (req, res) => {
   try {
-    const contacts = await Contact.find({ direction: "received" }).exec();
-    res.status(200).set(ACCESS_CONTROL).json(contacts);
+    // Primero, obtén todos los contactos
+    let contacts = await Contact.find();
+
+    // Luego, para cada contacto, obtén sus mensajes asociados
+    // Esto es más eficiente si se puede hacer en paralelo o mediante agregación
+    contacts = await Promise.all(
+      contacts.map(async (contact) => {
+        const messages = await Message.find({ contactId: contact._id });
+        return { ...contact.toObject(), messages };
+      })
+    );
+
+    res.status(200).json(contacts);
   } catch (error) {
-    console.error("Error al obtener los mensajes:", error);
-    res
-      .status(500)
-      .json({ error: "Error al obtener los mensajes del servidor" });
+    console.error("Error al obtener los contactos y mensajes:", error);
+    res.status(500).json({
+      error: "Error al obtener los contactos y mensajes del servidor",
+    });
   }
 };
+
 async function sendMessage(data) {
   try {
     const res = await axios.post(URL_WHAT, data, {
@@ -211,15 +205,13 @@ async function sendMessage(data) {
   }
 }
 
-app.get("/getContacts", getContacts);
+app.get("/getContacts", getContactsAndMessages);
 
 const webhookPost = async (req, res) => {
-  console.log("webhookPost: ", req.body);
   const body = req.body;
-  console.log("body: ", body.entry[0]);
+
   try {
-    const incomingMessage = req.body;
-    if (!isValidIncomingMessage(incomingMessage)) {
+    if (!isValidIncomingMessage(body)) {
       const response = respondWithErrorMessage(
         "Invalid incoming message format"
       );
@@ -229,7 +221,7 @@ const webhookPost = async (req, res) => {
         .send(response.body);
     }
 
-    const changes = incomingMessage.entry?.[0]?.changes;
+    const changes = body.entry?.[0]?.changes;
 
     const hasIncomingMessage = changes?.some(
       (change) => change.field === "messages" && change.value?.messages
@@ -237,7 +229,7 @@ const webhookPost = async (req, res) => {
 
     if (!hasIncomingMessage) {
       console.log("No new messages to process.");
-      return res.status(200).set(ACCESS_CONTROL).json(req.body);
+      return res.sendStatus(200);
     }
 
     const messageDetails = changes[0].value.messages[0];
@@ -246,7 +238,7 @@ const webhookPost = async (req, res) => {
     });
     if (existingMessage) {
       console.log("el mensaje ya existe en la base de datos");
-      return res.status(200).set(ACCESS_CONTROL).json(req.body);
+      return res.sendStatus(200);
     } else {
       console.log("el mensaje no existe en la base de datos");
       await saveContactMessage(body.entry[0]);
@@ -276,7 +268,7 @@ const webhookPost = async (req, res) => {
       },
     };
 
-    const response = await sendMessage(data);
+    // const response = await sendMessage(data);
 
     return res.status(200).set(ACCESS_CONTROL).json(req.body);
   } catch (error) {
