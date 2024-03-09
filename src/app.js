@@ -32,6 +32,10 @@ app.use(express.json());
 
 io.on("connection", (socket) => {
   console.log("a user connected");
+  socket.emit("newMessage", { test: "Este es un mensaje de prueba" });
+  socket.on("disconnect", () => {
+    console.log("Cliente desconectado");
+  });
 });
 
 app.use(express.urlencoded({ extended: false }));
@@ -84,9 +88,9 @@ async function saveContactMessage(message) {
     });
 
     await newMessage.save();
+    io.emit("newMessage", { contactId: contact._id, message: newMessage });
   } else {
     const response = await sendMessage(message);
-
     let contact = await Contact.findOne({
       "profile.waId": response.contacts[0].wa_id,
     });
@@ -116,8 +120,40 @@ async function saveContactMessage(message) {
     });
 
     await newMessage.save();
+    io.emit("newMessage", { contactId: contact._id, message: newMessage });
   }
 }
+app.post("/messages/read", async (req, res) => {
+  const { contactId } = req.body;
+
+  try {
+    await Message.updateMany(
+      { contactId: contactId, direction: "received", read: false },
+      { $set: { read: true } }
+    );
+
+    res.json({ message: "Received messages marked as read." });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error marking received messages as read.", error });
+  }
+});
+// En tu archivo de rutas del servidor, añade una nueva ruta
+app.get("/messages/unread-count", async (req, res) => {
+  try {
+    const unreadCounts = await Message.aggregate([
+      { $match: { read: false, direction: "received" } },
+      { $group: { _id: "$contactId", count: { $sum: 1 } } },
+    ]);
+
+    res.json(unreadCounts);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error retrieving unread messages count.", error });
+  }
+});
 
 const saveSentMessage = async (req, res) => {
   try {
@@ -166,25 +202,40 @@ function isValidIncomingMessage(message) {
   return true;
 }
 
-const getContactsAndMessages = async (req, res) => {
+const getContacts = async (req, res) => {
   try {
-    // Primero, obtén todos los contactos
-    let contacts = await Contact.find();
-
-    // Luego, para cada contacto, obtén sus mensajes asociados
-    // Esto es más eficiente si se puede hacer en paralelo o mediante agregación
-    contacts = await Promise.all(
-      contacts.map(async (contact) => {
-        const messages = await Message.find({ contactId: contact._id });
-        return { ...contact.toObject(), messages };
-      })
-    );
+    const contacts = await Contact.aggregate([
+      {
+        $lookup: {
+          from: "messages",
+          localField: "_id",
+          foreignField: "contactId",
+          as: "messages",
+        },
+      },
+      { $unwind: "$messages" },
+      { $sort: { "messages.timestamp": -1 } },
+      {
+        $group: {
+          _id: "$_id",
+          lastMessage: { $first: "$messages" },
+          contactInfo: { $first: "$$ROOT" },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          profile: "$contactInfo.profile",
+          lastMessage: 1,
+        },
+      },
+    ]);
 
     res.status(200).json(contacts);
   } catch (error) {
-    console.error("Error al obtener los contactos y mensajes:", error);
+    console.error("Error al obtener los contactos:", error);
     res.status(500).json({
-      error: "Error al obtener los contactos y mensajes del servidor",
+      error: "Error al obtener los contactos del servidor",
     });
   }
 };
@@ -202,8 +253,50 @@ async function sendMessage(data) {
     throw new Error("Failed to send message through WhatsApp API");
   }
 }
+const getAllMessagesByContactId = async (req, res) => {
+  try {
+    const { contactId } = req.params; // Asumiendo que pasas el ID del contacto en la URL
 
-app.get("/getContacts", getContactsAndMessages);
+    // Encuentra la información del perfil del contacto
+    const contact = await Contact.findById(contactId);
+
+    // Encuentra los mensajes asociados al contacto
+    const messages = await Message.find({ contactId: contactId }).sort({
+      timestamp: -1, // Ordena los mensajes por timestamp de forma descendente
+    });
+
+    if (!contact) {
+      return res.status(404).json({
+        message: "No se encontró el contacto especificado.",
+      });
+    }
+
+    if (messages.length > 0) {
+      // Combinar la información del perfil con los mensajes en la respuesta
+      const response = {
+        profile: contact.profile, // Asumiendo que la información del perfil está bajo 'profile'
+        messages: messages,
+      };
+
+      res.status(200).json(response);
+    } else {
+      // Si no hay mensajes, igualmente enviar el perfil del contacto
+      res.status(404).json({
+        profile: contact.profile,
+        message: "No se encontraron mensajes para el contacto especificado.",
+      });
+    }
+  } catch (error) {
+    console.error("Error al obtener los mensajes del contacto:", error);
+    res.status(500).json({
+      error: "Error al obtener los mensajes del servidor",
+    });
+  }
+};
+
+app.get("/getContacts", getContacts);
+
+app.get("/messages/:contactId", getAllMessagesByContactId);
 
 const webhookPost = async (req, res) => {
   const body = req.body;
@@ -226,17 +319,14 @@ const webhookPost = async (req, res) => {
     );
 
     if (!hasIncomingMessage) {
-      console.log("Received new statuses:", changes[0].statuses);
+      if (body?.entry[0].changes[0].value.statuses[0]) {
+        const status = body?.entry[0].changes[0].value.statuses[0];
+        const id = status.id;
+        const newStatus = status.status;
+        const existingMessage = await Message.findOne({ messageId: id });
 
-      if (changes[0].statuses) {
-        console.log("Received new statuses:", changes[0].statuses);
-        const id = changes[0].id;
-        const newStatus = changes[0].status;
-        if (newStatus !== "read") {
-          await Message.updateOne(
-            { messageId: id },
-            { $set: { status: newStatus } }
-          );
+        if (existingMessage.status !== "read") {
+          await Message.updateOne({ messageId: id }, { status: newStatus });
         }
         return res.sendStatus(200);
       }

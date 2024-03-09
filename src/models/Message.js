@@ -11,6 +11,7 @@ const messageSchema = new Schema({
   type: { type: String, default: "text" },
   direction: { type: String, enum: ["sent", "received"], required: true },
   status: { type: String, default: "delivered" },
+  read: { type: Boolean, default: false },
 });
 
 export default model("Message", messageSchema);
