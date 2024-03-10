@@ -85,6 +85,7 @@ async function saveContactMessage(message) {
       text: { body: messageDetails.text.body },
       type: messageDetails.type,
       direction: "received",
+      read: false,
     });
 
     await newMessage.save();
@@ -124,13 +125,19 @@ async function saveContactMessage(message) {
   }
 }
 app.post("/messages/read", async (req, res) => {
+  console.log(req.body);
   const { contactId } = req.body;
 
   try {
-    await Message.updateMany(
+    const updateResult = await Message.updateMany(
       { contactId: contactId, direction: "received", read: false },
       { $set: { read: true } }
     );
+
+    // Notificar al front-end que los mensajes han sido marcados como leídos
+    if (updateResult.modifiedCount > 0) {
+      io.emit("newMessage", { contactIdRead: contactId });
+    }
 
     res.json({ message: "Received messages marked as read." });
   } catch (error) {
@@ -139,7 +146,7 @@ app.post("/messages/read", async (req, res) => {
       .json({ message: "Error marking received messages as read.", error });
   }
 });
-// En tu archivo de rutas del servidor, añade una nueva ruta
+
 app.get("/messages/unread-count", async (req, res) => {
   try {
     const unreadCounts = await Message.aggregate([
