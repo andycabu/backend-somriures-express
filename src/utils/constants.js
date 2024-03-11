@@ -8,3 +8,5 @@ export const FROM_PHONE_NUMBER_ID = process.env.FROM_PHONE_NUMBER_ID;
 export const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 export const PRUEBA_TOKEN = process.env.PRUEBA_TOKEN;
 export const MONGODB_URI_LOCAL = process.env.MONGODB_URI_LOCAL;
+
+export const URL_WHAT = `https://graph.facebook.com/v19.0/${FROM_PHONE_NUMBER_ID}/messages`;
