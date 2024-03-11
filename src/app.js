@@ -136,6 +136,7 @@ app.post("/messages/read", async (req, res) => {
 
     // Notificar al front-end que los mensajes han sido marcados como leídos
     if (updateResult.modifiedCount > 0) {
+      console.log("Received messages marked as read.");
       io.emit("newMessage", { contactIdRead: contactId });
     }
 
