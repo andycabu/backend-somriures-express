@@ -327,6 +327,7 @@ const webhookPost = async (req, res) => {
 
     if (!hasIncomingMessage) {
       if (body?.entry[0].changes[0].value.statuses[0]) {
+        console.log(body?.entry[0]);
         const status = body?.entry[0].changes[0].value.statuses[0];
         const id = status.id;
         const newStatus = status.status;
@@ -334,6 +335,10 @@ const webhookPost = async (req, res) => {
 
         if (existingMessage.status !== "read") {
           await Message.updateOne({ messageId: id }, { status: newStatus });
+          io.emit("newMessage", {
+            messageId: id,
+            newStatus: newStatus,
+          });
         }
         return res.sendStatus(200);
       }
