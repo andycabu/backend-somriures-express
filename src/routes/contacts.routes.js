@@ -1,12 +1,12 @@
 import { Router } from "express";
 import {
   getContacts,
-  saveContactMessage,
+  saveSentMessage,
 } from "../controllers/contact.controller.js";
 
 const router = Router();
 
-router.post("/saveMessage", saveContactMessage);
+router.post("/saveMessage", saveSentMessage);
 router.get("/getContacts", getContacts);
 
 export default router;

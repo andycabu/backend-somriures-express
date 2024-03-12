@@ -1,23 +1,27 @@
 "use strict";
-import { config } from "dotenv";
-config({ path: "../.env" });
+
 import express from "express";
+import { createServer } from "http";
 import { Server } from "socket.io";
-import { createServer } from "node:http";
+import { config } from "dotenv";
+
 import contactRoutes from "./routes/contacts.routes.js";
 import messageRoutes from "./routes/message.routes.js";
-import { PRUEBA_TOKEN } from "./utils/constants.js";
+import webhookRoutes from "./routes/webhook.routes.js";
 import "./db/db.js";
+
+config({ path: "../.env" });
 
 const app = express();
 const server = createServer(app);
-
-const io = new Server(server, {
+export const io = new Server(server, {
   cors: {
     origin: "*",
   },
 });
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 io.on("connection", (socket) => {
   console.log("a user connected");
@@ -26,8 +30,7 @@ io.on("connection", (socket) => {
   });
 });
 
-app.use(express.urlencoded({ extended: false }));
-app.use(function (req, res, next) {
+app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header(
     "Access-Control-Allow-Headers",
@@ -35,21 +38,9 @@ app.use(function (req, res, next) {
   );
   next();
 });
-server.listen(3000, () => {
-  console.log("server running at http://localhost:3000");
-});
-app.use("/api", contactRoutes, messageRoutes);
 
-app.get("/webhook", (req, res) => {
-  let mode = req.query["hub.mode"];
-  let token = req.query["hub.verify_token"];
-  let challenge = req.query["hub.challenge"];
-  if (mode && token) {
-    if (mode === "subscribe" && token === PRUEBA_TOKEN) {
-      console.log("WEBHOOK_VERIFIED");
-      res.status(200).send(challenge);
-    } else {
-      res.status(403);
-    }
-  }
+server.listen(3000, () => {
+  console.log("Server running at http://localhost:3000");
 });
+
+app.use("/api", webhookRoutes, contactRoutes, messageRoutes);

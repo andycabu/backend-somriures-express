@@ -2,6 +2,8 @@ import Contact from "../models/Contact.js";
 import Message from "../models/Message.js";
 import axios from "axios";
 import { URL_WHAT, ACCESS_TOKEN } from "../utils/constants.js";
+import { ACCESS_CONTROL } from "../helpers/helpers.js";
+import { io } from "../app.js";
 async function sendMessage(data) {
   try {
     const res = await axios.post(URL_WHAT, data, {
@@ -15,11 +17,7 @@ async function sendMessage(data) {
     throw new Error("Failed to send message through WhatsApp API");
   }
 }
-export const saveContactMessage = async (req, res) => {
-  const io = req.app.get("io");
-  console.log("saveContactMessage", io);
-  console.log(req.body);
-  const message = req.body;
+export const saveContactMessage = async (message) => {
   if (message.changes?.length > 0) {
     const messageDetails = message.changes[0].value.messages[0];
     const contactDetails = message.changes[0].value.contacts[0];
@@ -84,6 +82,16 @@ export const saveContactMessage = async (req, res) => {
 
     await newMessage.save();
     io.emit("newMessage", { contactId: contact._id, message: newMessage });
+  }
+};
+
+export const saveSentMessage = async (req, res) => {
+  try {
+    const message = req.body;
+    await saveContactMessage(message);
+    return res.status(200).set(ACCESS_CONTROL).json(req.body);
+  } catch (error) {
+    console.error("Error al obtener los mensajes:", error);
   }
 };
 
