@@ -7,7 +7,7 @@ import {
 
 const router = Router();
 
-router.get("/messages/:contactId", getAllMessagesByContactId);
+router.get("/messages/:contactId/ById", getAllMessagesByContactId);
 router.get("/messages/unread-count", getUnreadMessagesCount);
 router.post("/messages/read", markReceivedMessagesAsRead);
 

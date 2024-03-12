@@ -43,6 +43,7 @@ export const getAllMessagesByContactId = async (req, res) => {
   }
 };
 export const getUnreadMessagesCount = async (req, res) => {
+  console.log("me ejecuto");
   try {
     const unreadCounts = await Message.aggregate([
       { $match: { read: false, direction: "received" } },
