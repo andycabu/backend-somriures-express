@@ -4,7 +4,7 @@ import axios from "axios";
 import { URL_WHAT, ACCESS_TOKEN } from "../utils/constants.js";
 import { ACCESS_CONTROL } from "../helpers/helpers.js";
 import { io } from "../app.js";
-async function sendMessage(data) {
+export const sendMessage = async (data) => {
   try {
     const res = await axios.post(URL_WHAT, data, {
       headers: {
@@ -16,7 +16,7 @@ async function sendMessage(data) {
   } catch (error) {
     throw new Error("Failed to send message through WhatsApp API");
   }
-}
+};
 export const saveContactMessage = async (message) => {
   if (message.changes?.length > 0) {
     const messageDetails = message.changes[0].value.messages[0];
@@ -35,6 +35,7 @@ export const saveContactMessage = async (message) => {
         receivedAt: new Date(),
       });
       await contact.save();
+      io.emit("newMessage", { newContact: contact });
     }
 
     const newMessage = new Message({

@@ -9,6 +9,7 @@ import { PRUEBA_TOKEN } from "../utils/constants.js";
 import Contact from "../models/Contact.js";
 import Message from "../models/Message.js";
 import { io } from "../app.js";
+import { sendMessage } from "../controllers/contact.controller.js";
 
 export const verifyWebhook = (req, res) => {
   let mode = req.query["hub.mode"];
@@ -16,7 +17,6 @@ export const verifyWebhook = (req, res) => {
   let challenge = req.query["hub.challenge"];
   if (mode && token) {
     if (mode === "subscribe" && token === PRUEBA_TOKEN) {
-      console.log("WEBHOOK_VERIFIED");
       res.status(200).send(challenge);
     } else {
       res.status(403);
@@ -45,7 +45,6 @@ export const webhookPost = async (req, res) => {
 
     if (!hasIncomingMessage) {
       if (body?.entry[0].changes[0].value.statuses[0]) {
-        console.log(body?.entry[0]);
         const status = body?.entry[0].changes[0].value.statuses[0];
         const id = status.id;
         const newStatus = status.status;
@@ -60,7 +59,6 @@ export const webhookPost = async (req, res) => {
         }
         return res.sendStatus(200);
       }
-      console.log("No new messages to process.");
       return res.sendStatus(200);
     }
 
@@ -69,38 +67,36 @@ export const webhookPost = async (req, res) => {
       "messages.messageId": messageDetails.id,
     });
     if (existingMessage) {
-      console.log("el mensaje ya existe en la base de datos");
       return res.sendStatus(200);
     } else {
-      console.log("el mensaje no existe en la base de datos");
       await saveContactMessage(body.entry[0]);
     }
 
-    //   const recipientId = messageDetails.from;
-    //   const templateName = messageDetails.metadata
-    //     ? TEMPLATE_NAMES.CONFIRMATION
-    //     : TEMPLATE_NAMES.DEFAULT;
+    const recipientId = messageDetails.from;
+    const templateName = messageDetails.metadata
+      ? TEMPLATE_NAMES.CONFIRMATION
+      : TEMPLATE_NAMES.DEFAULT;
 
-    //   const data = {
-    //     messaging_product: "whatsapp",
-    //     recipient_type: "individual",
-    //     to: recipientId,
-    //     // type: "template",
-    //     // template: {
-    //     //   name: templateName,
-    //     //   language: {
-    //     //     code: "es",
-    //     //   },
-    //     //   components: getTemplateComponents(messageDetails.metadata),
-    //     // },
-    //     type: "text",
-    //     text: {
-    //       preview_url: false,
-    //       body: "prueba de recibir mensajes WhatsApp",
-    //     },
-    //   };
+    const data = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: recipientId,
+      type: "template",
+      // template: {
+      //   name: templateName,
+      //   language: {
+      //     code: "es",
+      //   },
+      //   components: getTemplateComponents(messageDetails.metadata),
+      // },
+      type: "text",
+      text: {
+        preview_url: false,
+        body: "prueba de recibir mensajes WhatsApp",
+      },
+    };
 
-    //   // const response = await sendMessage(data);
+    const response = await sendMessage(data);
 
     return res.status(200).set(ACCESS_CONTROL).json(req.body);
   } catch (error) {

@@ -2,7 +2,6 @@ import Contact from "../models/Contact.js";
 import Message from "../models/Message.js";
 import { io } from "../app.js";
 export const getAllMessagesByContactId = async (req, res) => {
-  console.log(req.params);
   try {
     const { contactId } = req.params; // Asumiendo que pasas el ID del contacto en la URL
 
@@ -43,7 +42,6 @@ export const getAllMessagesByContactId = async (req, res) => {
   }
 };
 export const getUnreadMessagesCount = async (req, res) => {
-  console.log("me ejecuto");
   try {
     const unreadCounts = await Message.aggregate([
       { $match: { read: false, direction: "received" } },
